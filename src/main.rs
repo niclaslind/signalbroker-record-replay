@@ -6,6 +6,7 @@ use protobuf::{SingularPtrField, RepeatedField};
 use std::thread;
 use std::time::Duration;
 use futures::{StreamExt};
+use futures::executor::block_on;
 
 fn main() {
     let env = Arc::new(EnvBuilder::new().build());
@@ -14,20 +15,23 @@ fn main() {
         Arc::new(Mutex::new(protos::network_api_grpc::NetworkServiceClient::new(ch)));
 
     let sub_client = Arc::clone(&client);
-    async move {
+
+    let subscribe = thread::spawn(move || loop {
         let client = sub_client.lock().unwrap();
-        let signal = subscribe_to_signals(&client).await;
-    }
+        block_on(async {
+            let _result = subscribe_to_signals(&client).await;
+        });
+    });
 
-    //let pub_client = Arc::clone(&client);
-   // let publish = thread::spawn(move || loop {
-   //     let client = pub_client.lock().unwrap();
-   //     publish_signals(&client);
-   //     thread::sleep(Duration::from_millis(500));
-   // });
+    let pub_client = Arc::clone(&client);
+    let publish = thread::spawn(move || loop {
+        let client = pub_client.lock().unwrap();
+        publish_signals(&client);
+        thread::sleep(Duration::from_millis(500));
+    });
 
-    // subscribe.join().expect("The subscribe thread has panicked");
-    //publish.join().expect("The publisher thread has panicked");
+    subscribe.join().expect("The subscribe thread has panicked");
+    publish.join().expect("The publisher thread has panicked");
 }
 
 // Create a subscribing stream from set of signalIDs to signal-server
@@ -53,7 +57,9 @@ async fn subscribe_to_signals(client: &protos::network_api_grpc::NetworkServiceC
             println!("Response: Hello");
             println!("{:?}", resp.unwrap().signal.into_vec());
         }
-        None => {}
+        None => {
+            println!("Nothing here..");
+        }
     }
 }
 
