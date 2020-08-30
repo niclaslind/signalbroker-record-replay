@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use protobuf::{SingularPtrField, RepeatedField};
 use std::thread;
 use std::time::Duration;
-use futures::Stream;
+use futures::{StreamExt};
 
 fn main() {
     let env = Arc::new(EnvBuilder::new().build());
@@ -14,26 +14,29 @@ fn main() {
         Arc::new(Mutex::new(protos::network_api_grpc::NetworkServiceClient::new(ch)));
 
     let sub_client = Arc::clone(&client);
-    let subscribe = thread::spawn(move || {
+    async move {
         let client = sub_client.lock().unwrap();
-        subscribe_to_signals(&client);
-    });
+        let signal = subscribe_to_signals(&client).await;
+    }
 
-    let pub_client = Arc::clone(&client);
-    let publish = thread::spawn(move || loop {
-        let client = pub_client.lock().unwrap();
-        publish_signals(&client);
-        thread::sleep(Duration::from_millis(500));
-    });
+    //let pub_client = Arc::clone(&client);
+   // let publish = thread::spawn(move || loop {
+   //     let client = pub_client.lock().unwrap();
+   //     publish_signals(&client);
+   //     thread::sleep(Duration::from_millis(500));
+   // });
 
-    subscribe.join().expect("The subscribe thread has panicked");
-    publish.join().expect("The publisher thread has panicked");
+    // subscribe.join().expect("The subscribe thread has panicked");
+    //publish.join().expect("The publisher thread has panicked");
 }
 
 // Create a subscribing stream from set of signalIDs to signal-server
-fn subscribe_to_signals(client: &protos::network_api_grpc::NetworkServiceClient) {
+async fn subscribe_to_signals(client: &protos::network_api_grpc::NetworkServiceClient) {
+    println!("In here for some reason...");
     let mut client_id = protos::common::ClientId::new();
     client_id.id = "rusty_client_sub".to_string();
+
+    println!("Creating sub_config...");
 
     let mut subscriber_config = protos::network_api::SubscriberConfig::new();
     subscriber_config.clientId = SingularPtrField::some(client_id);
@@ -42,8 +45,16 @@ fn subscribe_to_signals(client: &protos::network_api_grpc::NetworkServiceClient)
     /* TODO Need to understand how to handle a ClientSStreamReceiver,
              for now it doesn't work to use poll_next function
     */
-    let sub_info: ClientSStreamReceiver<protos::network_api::Signals> = client.subscribe_to_signals(&subscriber_config).unwrap();
-    match sub_info.poll_next() {}
+    let mut sub_info: ClientSStreamReceiver<protos::network_api::Signals> = client.subscribe_to_signals(&subscriber_config).unwrap();
+
+    println!("Start to await here...");
+    match sub_info.next().await {
+        Some(resp) => {
+            println!("Response: Hello");
+            println!("{:?}", resp.unwrap().signal.into_vec());
+        }
+        None => {}
+    }
 }
 
 // Publish signals to signal-broker over gRPC
