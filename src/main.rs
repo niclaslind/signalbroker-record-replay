@@ -26,10 +26,11 @@ fn main() {
         thread::sleep(Duration::from_millis(500));
     });
 
-    subscribe.join().expect("The receiver thread has panicked");
-    publish.join().expect("The sender thread has panicked");
+    subscribe.join().expect("The subscribe thread has panicked");
+    publish.join().expect("The publisher thread has panicked");
 }
 
+// Create a subscribing stream from set of signalIDs to signal-server
 fn subscribe_to_signals(client: &protos::network_api_grpc::NetworkServiceClient) {
     let mut client_id = protos::common::ClientId::new();
     client_id.id = "rusty_client_sub".to_string();
@@ -38,8 +39,10 @@ fn subscribe_to_signals(client: &protos::network_api_grpc::NetworkServiceClient)
     subscriber_config.clientId = SingularPtrField::some(client_id);
     subscriber_config.signals = generate_signal_ids();
 
+    /* TODO Need to understand how to handle a ClientSStreamReceiver,
+             for now it doesn't work to use poll_next function
+    */
     let sub_info: ClientSStreamReceiver<protos::network_api::Signals> = client.subscribe_to_signals(&subscriber_config).unwrap();
-
     match sub_info.poll_next() {}
 }
 
@@ -54,6 +57,7 @@ fn publish_signals(client: &protos::network_api_grpc::NetworkServiceClient) {
     let _result = client.publish_signals(&publisher_config).unwrap();
 }
 
+// Generating set of SignalsIDs, for subscriptions
 fn generate_signal_ids() -> SingularPtrField<protos::network_api::SignalIds> {
     let mut namespace = protos::common::NameSpace::new();
     namespace.name = "VirtualInterface".to_string();
@@ -70,7 +74,7 @@ fn generate_signal_ids() -> SingularPtrField<protos::network_api::SignalIds> {
     SingularPtrField::some(signal_ids)
 }
 
-// Generate signals from proto_buf files
+// Generating set of Signals, for publishing
 fn generate_signals() -> SingularPtrField<protos::network_api::Signals> {
     let mut namespace = protos::common::NameSpace::new();
     namespace.name = "VirtualInterface".to_string();
