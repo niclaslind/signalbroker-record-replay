@@ -3,75 +3,65 @@ pub mod protos;
 use grpcio::{ChannelBuilder, EnvBuilder, ClientSStreamReceiver};
 use std::sync::{Arc, Mutex};
 use protobuf::{SingularPtrField, RepeatedField};
-use std::thread;
-use std::time::Duration;
 use futures::{StreamExt};
-use futures::executor::block_on;
+use std::io::{Write};
+use futures::executor::{block_on};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let env = Arc::new(EnvBuilder::new().build());
-    let ch = ChannelBuilder::new(env).connect(format!("localhost:50051").as_str());
-    let client =
-        Arc::new(Mutex::new(protos::network_api_grpc::NetworkServiceClient::new(ch)));
+    let channel = ChannelBuilder::new(env).connect(format!("localhost:50051").as_str());
 
-    let sub_client = Arc::clone(&client);
-
-    let subscribe = thread::spawn(move || loop {
-        let client = sub_client.lock().unwrap();
-        block_on(async {
-            let _result = subscribe_to_signals(&client).await;
-        });
-    });
+    let client
+        = Arc::new(Mutex::new(protos::network_api_grpc::NetworkServiceClient::new(channel)));
 
     let pub_client = Arc::clone(&client);
-    let publish = thread::spawn(move || loop {
+    loop {
         let client = pub_client.lock().unwrap();
-        publish_signals(&client);
-        thread::sleep(Duration::from_millis(500));
-    });
+        let reader = std::io::stdin();
+        let mut input = String::new();
 
-    subscribe.join().expect("The subscribe thread has panicked");
-    publish.join().expect("The publisher thread has panicked");
+        print!("Enter a number: ");
+        std::io::stdout().flush().ok().expect("Could not flush output");
+        let _input_result = reader.read_line(&mut input);
+        input = input.trim().to_string();
+        let input_as_int: i64 = input.parse().unwrap_or(0);
+        block_on(async {
+            publish_signals(&client, &input_as_int).await;
+            subscribe_to_signals(&client).await;
+        });
+    }
 }
 
 // Create a subscribing stream from set of signalIDs to signal-server
 async fn subscribe_to_signals(client: &protos::network_api_grpc::NetworkServiceClient) {
-    println!("In here for some reason...");
     let mut client_id = protos::common::ClientId::new();
     client_id.id = "rusty_client_sub".to_string();
-
-    println!("Creating sub_config...");
 
     let mut subscriber_config = protos::network_api::SubscriberConfig::new();
     subscriber_config.clientId = SingularPtrField::some(client_id);
     subscriber_config.signals = generate_signal_ids();
 
-    /* TODO Need to understand how to handle a ClientSStreamReceiver,
-             for now it doesn't work to use poll_next function
-    */
-    let mut sub_info: ClientSStreamReceiver<protos::network_api::Signals> = client.subscribe_to_signals(&subscriber_config).unwrap();
+    let mut sub_info: ClientSStreamReceiver<protos::network_api::Signals> =
+        client.subscribe_to_signals(&subscriber_config).unwrap();
 
-    println!("Start to await here...");
     match sub_info.next().await {
         Some(resp) => {
-            println!("Response: Hello");
-            println!("{:?}", resp.unwrap().signal.into_vec());
+            println!("{:?}", resp.unwrap().signal.as_ref());
         }
-        None => {
-            println!("Nothing here..");
-        }
+        None => {}
     }
 }
 
 // Publish signals to signal-broker over gRPC
-fn publish_signals(client: &protos::network_api_grpc::NetworkServiceClient) {
+async fn publish_signals(client: &protos::network_api_grpc::NetworkServiceClient, payload: &i64) {
     let mut client_id = protos::common::ClientId::new();
     client_id.id = "rusty_client_pub".to_string();
 
     let mut publisher_config = protos::network_api::PublisherConfig::new();
     publisher_config.clientId = SingularPtrField::some(client_id);
-    publisher_config.signals = generate_signals();
-    let _result = client.publish_signals(&publisher_config).unwrap();
+    publisher_config.signals = generate_signals(payload);
+    let _result = client.publish_signals_async(&publisher_config).unwrap().await;
 }
 
 // Generating set of SignalsIDs, for subscriptions
@@ -92,7 +82,7 @@ fn generate_signal_ids() -> SingularPtrField<protos::network_api::SignalIds> {
 }
 
 // Generating set of Signals, for publishing
-fn generate_signals() -> SingularPtrField<protos::network_api::Signals> {
+fn generate_signals(payload: &i64) -> SingularPtrField<protos::network_api::Signals> {
     let mut namespace = protos::common::NameSpace::new();
     namespace.name = "VirtualInterface".to_string();
 
@@ -100,13 +90,7 @@ fn generate_signals() -> SingularPtrField<protos::network_api::Signals> {
     signal_id.name = "virtual_signal".to_string();
     signal_id.namespace = SingularPtrField::some(namespace);
 
-    // return the time_now - UNIX_EPOCH
-    let payload = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("Something went wrong")
-        .as_secs() as i64;
-
-    let signal_payload = Option::from(protos::network_api::Signal_oneof_payload::integer(payload));
+    let signal_payload = Option::from(protos::network_api::Signal_oneof_payload::integer(*payload));
 
     let mut signal = protos::network_api::Signal::new();
     signal.id = SingularPtrField::some(signal_id);

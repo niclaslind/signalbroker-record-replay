@@ -9,9 +9,11 @@ name = "protos"
 path = "src/protos/mod.rs"
 
 [dependencies]
+tonic = "0.3.1"
 grpcio = "0.6.0"
 protobuf = "2.17.0"
 futures = "0.3.5"
+tokio = {version = "0.2.*", features = ["full"] }
 
 [build-dependencies]
 protoc-grpcio = "2.0.0"
